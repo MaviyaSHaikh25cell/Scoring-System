@@ -1,0 +1,268 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  ADMIN
+  JUDGE
+  BOXER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum BoxerStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum JudgeStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum TournamentStatus {
+  UPCOMING
+  LIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum MatchStatus {
+  UPCOMING
+  LIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum Corner {
+  RED
+  BLUE
+}
+
+enum DecisionType {
+  POINTS
+  UNANIMOUS_DECISION
+  SPLIT_DECISION
+  MAJORITY_DECISION
+  KO
+  TKO
+  DISQUALIFICATION
+  RETIREMENT
+  DRAW
+  NO_CONTEST
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  passwordHash String
+  role         UserRole
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  boxer Boxer?
+  judge Judge?
+
+  @@index([role])
+  @@index([status])
+}
+
+model Boxer {
+  id          String      @id @default(cuid())
+  boxerId     String      @unique
+  userId      String?     @unique
+  name        String
+  dateOfBirth DateTime
+  weight      Float
+  club        String
+  coach       String
+  stance      String
+  status      BoxerStatus @default(ACTIVE)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  user              User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  redMatches        Match[]           @relation("RedBoxer")
+  blueMatches       Match[]           @relation("BlueBoxer")
+  tournamentEntries TournamentBoxer[]
+
+  @@index([name])
+  @@index([status])
+}
+
+model Judge {
+  id        String      @id @default(cuid())
+  judgeId   String      @unique
+  userId    String?     @unique
+  name      String
+  email     String      @unique
+  status    JudgeStatus @default(ACTIVE)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  user        User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  matchJudges MatchJudge[]
+  roundScores RoundScore[]
+
+  @@index([status])
+}
+
+model Tournament {
+  id        String           @id @default(cuid())
+  name      String
+  date      DateTime?
+  venue     String?
+  status    TournamentStatus @default(UPCOMING)
+  data      Json?
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  boxers  TournamentBoxer[]
+  matches Match[]
+
+  @@index([status])
+  @@index([date])
+}
+
+model TournamentBoxer {
+  id           String @id @default(cuid())
+  tournamentId String
+  boxerId      String
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  boxer      Boxer      @relation(fields: [boxerId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, boxerId])
+  @@index([boxerId])
+}
+
+model Match {
+  id             String      @id @default(cuid())
+  tournamentId   String?
+  redBoxerId     String
+  blueBoxerId    String
+  weightCategory String
+  rounds         Int
+  matchType      String
+  status         MatchStatus @default(UPCOMING)
+  currentRound   Int         @default(1)
+  winnerId       String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  tournament Tournament?  @relation(fields: [tournamentId], references: [id], onDelete: SetNull)
+  redBoxer   Boxer        @relation("RedBoxer", fields: [redBoxerId], references: [id])
+  blueBoxer  Boxer        @relation("BlueBoxer", fields: [blueBoxerId], references: [id])
+  judges     MatchJudge[]
+  scores     RoundScore[]
+  result     MatchResult?
+
+  @@index([tournamentId])
+  @@index([redBoxerId])
+  @@index([blueBoxerId])
+  @@index([status])
+}
+
+model MatchJudge {
+  id      String @id @default(cuid())
+  matchId String
+  judgeId String
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  judge Judge @relation(fields: [judgeId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, judgeId])
+  @@index([judgeId])
+}
+
+model RoundScore {
+  id          String @id @default(cuid())
+  matchId     String
+  judgeId     String
+  roundNumber Int
+
+  redScore  Int
+  blueScore Int
+
+  redKnockdowns  Int @default(0)
+  blueKnockdowns Int @default(0)
+
+  redWarnings  Int @default(0)
+  blueWarnings Int @default(0)
+
+  redFouls  Int @default(0)
+  blueFouls Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  judge Judge @relation(fields: [judgeId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, judgeId, roundNumber])
+  @@index([judgeId])
+  @@index([matchId, roundNumber])
+}
+
+model MatchResult {
+  id      String @id @default(cuid())
+  matchId String @unique
+
+  winnerId String?
+  loserId  String?
+
+  redTotalScore  Int
+  blueTotalScore Int
+
+  decision DecisionType
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@index([winnerId])
+  @@index([loserId])
+  @@index([decision])
+}
+
+model CompletedMatchHistory {
+  id            String @id @default(cuid())
+  sourceMatchId String @unique
+
+  redBoxer  String
+  blueBoxer String
+
+  winner String?
+  loser  String?
+
+  redScore  Int
+  blueScore Int
+
+  weightCategory String
+  rounds         Int
+  matchType      String
+
+  matchDate String
+  matchTime String
+
+  tournamentId      String?
+  tournamentMatchId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdAt])
+  @@index([tournamentId])
+}

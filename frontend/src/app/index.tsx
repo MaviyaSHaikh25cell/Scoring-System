@@ -1,3 +1,4 @@
+import { API_BASE_URL } from '../constants/api';
 import React, { useState } from 'react';
 import { router } from 'expo-router';
 import {
@@ -12,45 +13,311 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+type UserRole = 'ADMIN' | 'JUDGE' | 'BOXER';
+
+type Judge = {
+  id: string;
+  name: string;
+  email: string;
+  matches: number;
+  status: 'ACTIVE' | 'INACTIVE';
+};
+
+type BackendLoginResponse = {
+  success: boolean;
+  message: string;
+  token?: string;
+  user?: {
+    id: string;
+    email: string;
+    role: UserRole;
+    boxerId: string | null;
+    judgeId: string | null;
+    judgeDbId?: string | null;
+    name: string;
+  };
+};
+
+
+
+const JUDGES_STORAGE_KEY = '@boxing_system_judges';
+const CURRENT_JUDGE_KEY = '@boxing_current_judge';
+const CURRENT_ROLE_KEY = '@boxing_current_role';
+
+const AUTH_TOKEN_KEY = '@boxing_auth_token';
+const CURRENT_USER_KEY = '@boxing_current_user';
+const REMEMBER_ME_KEY = '@boxing_remember_me';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [selectedRole, setSelectedRole] =
+    useState<UserRole>('ADMIN');
 
-  const handleLogin = () => {
-    // Check if email and password are entered
-    if (!email || !password) {
+  const handleLogin = async () => {
+    const enteredEmail = email.trim().toLowerCase();
+    const enteredPassword = password.trim();
+
+    if (!enteredEmail || !enteredPassword) {
       Alert.alert(
         'Missing Information',
-        'Please enter your email and password.'
+        'Please enter your email and password.',
       );
       return;
     }
 
-    // Go to Dashboard
-    router.replace('/dashboard');
+    /* ADMIN */
+    if (selectedRole === 'ADMIN') {
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/auth/login`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              email: enteredEmail,
+              password: enteredPassword,
+            }),
+          },
+        );
+
+        let data: BackendLoginResponse;
+
+        try {
+          data =
+            (await response.json()) as BackendLoginResponse;
+        } catch {
+          Alert.alert(
+            'LOGIN ERROR',
+            'The server returned an invalid response.',
+          );
+          return;
+        }
+
+        if (
+          !response.ok ||
+          !data.success ||
+          !data.token ||
+          !data.user
+        ) {
+          Alert.alert(
+            'LOGIN FAILED',
+            data.message ||
+              'Invalid email or password.',
+          );
+          return;
+        }
+
+        if (data.user.role !== 'ADMIN') {
+          Alert.alert(
+            'ACCESS DENIED',
+            'This account is not authorized for Admin access.',
+          );
+          return;
+        }
+
+        await AsyncStorage.setItem(
+          AUTH_TOKEN_KEY,
+          data.token,
+        );
+
+        await AsyncStorage.setItem(
+          CURRENT_USER_KEY,
+          JSON.stringify(data.user),
+        );
+
+        await AsyncStorage.setItem(
+          CURRENT_ROLE_KEY,
+          'ADMIN',
+        );
+
+        if (rememberMe) {
+          await AsyncStorage.setItem(
+            REMEMBER_ME_KEY,
+            'true',
+          );
+        } else {
+          await AsyncStorage.removeItem(
+            REMEMBER_ME_KEY,
+          );
+        }
+
+        router.replace('/dashboard');
+        return;
+      } catch (error) {
+        console.log(
+          'Admin login error:',
+          error,
+        );
+
+        Alert.alert(
+          'SERVER CONNECTION ERROR',
+          'Unable to connect to the Boxing Scoring System server. Make sure the backend is running and your iPhone is connected to the same Wi-Fi network as the computer.',
+        );
+
+        return;
+      }
+    }
+
+    /* JUDGE */
+    if (selectedRole === 'JUDGE') {
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/auth/login`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              email: enteredEmail,
+              password: enteredPassword,
+            }),
+          },
+        );
+
+        let data: BackendLoginResponse;
+
+        try {
+          data = (await response.json()) as BackendLoginResponse;
+        } catch {
+          Alert.alert(
+            'LOGIN ERROR',
+            'The server returned an invalid response.',
+          );
+          return;
+        }
+
+        if (
+          !response.ok ||
+          !data.success ||
+          !data.token ||
+          !data.user
+        ) {
+          Alert.alert(
+            'LOGIN FAILED',
+            data.message || 'Invalid email or password.',
+          );
+          return;
+        }
+
+        if (data.user.role !== 'JUDGE') {
+          Alert.alert(
+            'ACCESS DENIED',
+            'This account is not authorized for Judge access.',
+          );
+          return;
+        }
+
+        if (!data.user.judgeId || !data.user.judgeDbId) {
+          Alert.alert(
+            'JUDGE PROFILE ERROR',
+            'This user account is not linked to a judge profile. Please ask the administrator to run the judge seed or repair the judge account.',
+          );
+          return;
+        }
+
+        /*
+         * Store the real PostgreSQL Judge ID, not the display
+         * code such as JG001. The scoring API uses this database
+         * relationship to identify the logged-in judge.
+         */
+        await AsyncStorage.setItem(
+          AUTH_TOKEN_KEY,
+          data.token,
+        );
+
+        await AsyncStorage.setItem(
+          CURRENT_USER_KEY,
+          JSON.stringify(data.user),
+        );
+
+        await AsyncStorage.setItem(
+          CURRENT_ROLE_KEY,
+          'JUDGE',
+        );
+
+        await AsyncStorage.setItem(
+          CURRENT_JUDGE_KEY,
+          JSON.stringify({
+            id: data.user.judgeDbId,
+            judgeId: data.user.judgeId,
+            name: data.user.name,
+            email: data.user.email,
+          }),
+        );
+
+        if (rememberMe) {
+          await AsyncStorage.setItem(
+            REMEMBER_ME_KEY,
+            'true',
+          );
+        } else {
+          await AsyncStorage.removeItem(
+            REMEMBER_ME_KEY,
+          );
+        }
+
+        router.replace('/judge-dashboard');
+        return;
+      } catch (error) {
+        console.log('Judge login error:', error);
+
+        Alert.alert(
+          'SERVER CONNECTION ERROR',
+          'Unable to connect to the Boxing Scoring System server. Make sure the backend is running and your device is connected to the same Wi-Fi network as the computer.',
+        );
+
+        return;
+      }
+    }
+
+    /* BOXER */
+    if (selectedRole === 'BOXER') {
+      await AsyncStorage.setItem(
+        CURRENT_ROLE_KEY,
+        'BOXER',
+      );
+
+      router.replace('/boxer-dashboard');
+      return;
+    }
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
         style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={
+          Platform.OS === 'ios'
+            ? 'padding'
+            : undefined
+        }
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={
+            styles.scrollContent
+          }
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
           {/* TOP BRANDING */}
           <View style={styles.brandSection}>
             <View style={styles.logoCircle}>
-              <Text style={styles.gloveEmoji}>🥊</Text>
+              <Text style={styles.gloveEmoji}>
+                🥊
+              </Text>
             </View>
 
-            <Text style={styles.appTitle}>BOXING</Text>
+            <Text style={styles.appTitle}>
+              BOXING
+            </Text>
 
             <Text style={styles.appSubtitle}>
               SCORING SYSTEM
@@ -69,13 +336,102 @@ export default function LoginScreen() {
             </Text>
 
             <Text style={styles.description}>
-              Sign in to manage matches and scoring
+              Secure access to tournament management & scoring
             </Text>
+
+            {/* ROLE SELECTOR */}
+            <View style={styles.roleSection}>
+              <Text style={styles.label}>
+                LOGIN AS
+              </Text>
+
+              <View
+                style={styles.roleSelector}
+              >
+                {/* ADMIN */}
+                <Pressable
+                  style={[
+                    styles.roleButton,
+                    selectedRole === 'ADMIN' &&
+                      styles.roleButtonActive,
+                    selectedRole === 'ADMIN' &&
+                      styles.adminRoleActive,
+                  ]}
+                  onPress={() =>
+                    setSelectedRole(
+                      'ADMIN',
+                    )
+                  }
+                >
+                  <Text
+                    style={[
+                      styles.roleButtonText,
+                      selectedRole === 'ADMIN' &&
+                        styles.roleButtonTextActive,
+                    ]}
+                  >
+                    ADMIN
+                  </Text>
+                </Pressable>
+
+                {/* JUDGE */}
+                <Pressable
+                  style={[
+                    styles.roleButton,
+                    selectedRole === 'JUDGE' &&
+                      styles.roleButtonActive,
+                    selectedRole === 'JUDGE' &&
+                      styles.judgeRoleActive,
+                  ]}
+                  onPress={() =>
+                    setSelectedRole(
+                      'JUDGE',
+                    )
+                  }
+                >
+                  <Text
+                    style={[
+                      styles.roleButtonText,
+                      selectedRole === 'JUDGE' &&
+                        styles.roleButtonTextActive,
+                    ]}
+                  >
+                    JUDGE
+                  </Text>
+                </Pressable>
+
+                {/* BOXER */}
+                <Pressable
+                  style={[
+                    styles.roleButton,
+                    selectedRole === 'BOXER' &&
+                      styles.roleButtonActive,
+                    selectedRole === 'BOXER' &&
+                      styles.boxerRoleActive,
+                  ]}
+                  onPress={() =>
+                    setSelectedRole(
+                      'BOXER',
+                    )
+                  }
+                >
+                  <Text
+                    style={[
+                      styles.roleButtonText,
+                      selectedRole === 'BOXER' &&
+                        styles.roleButtonTextActive,
+                    ]}
+                  >
+                    BOXER
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
 
             {/* EMAIL */}
             <View style={styles.inputGroup}>
               <Text style={styles.label}>
-                EMAIL / USERNAME
+                EMAIL ADDRESS
               </Text>
 
               <TextInput
@@ -86,6 +442,7 @@ export default function LoginScreen() {
                 onChangeText={setEmail}
                 autoCapitalize="none"
                 keyboardType="email-address"
+                autoCorrect={false}
               />
             </View>
 
@@ -95,35 +452,57 @@ export default function LoginScreen() {
                 PASSWORD
               </Text>
 
-              <View style={styles.passwordContainer}>
+              <View
+                style={
+                  styles.passwordContainer
+                }
+              >
                 <TextInput
-                  style={styles.passwordInput}
+                  style={
+                    styles.passwordInput
+                  }
                   placeholder="Enter your password"
                   placeholderTextColor="#777"
                   value={password}
                   onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
+                  secureTextEntry={
+                    !showPassword
+                  }
                 />
 
                 <Pressable
                   onPress={() =>
-                    setShowPassword(!showPassword)
+                    setShowPassword(
+                      !showPassword,
+                    )
                   }
-                  style={styles.showButton}
+                  style={
+                    styles.showButton
+                  }
                 >
-                  <Text style={styles.showText}>
-                    {showPassword ? 'HIDE' : 'SHOW'}
+                  <Text
+                    style={styles.showText}
+                  >
+                    {showPassword
+                      ? 'HIDE'
+                      : 'SHOW'}
                   </Text>
                 </Pressable>
               </View>
             </View>
 
             {/* REMEMBER + FORGOT */}
-            <View style={styles.optionsRow}>
+            <View
+              style={styles.optionsRow}
+            >
               <Pressable
-                style={styles.rememberContainer}
+                style={
+                  styles.rememberContainer
+                }
                 onPress={() =>
-                  setRememberMe(!rememberMe)
+                  setRememberMe(
+                    !rememberMe,
+                  )
                 }
               >
                 <View
@@ -134,13 +513,21 @@ export default function LoginScreen() {
                   ]}
                 >
                   {rememberMe && (
-                    <Text style={styles.checkmark}>
+                    <Text
+                      style={
+                        styles.checkmark
+                      }
+                    >
                       ✓
                     </Text>
                   )}
                 </View>
 
-                <Text style={styles.rememberText}>
+                <Text
+                  style={
+                    styles.rememberText
+                  }
+                >
                   Remember me
                 </Text>
               </Pressable>
@@ -149,11 +536,15 @@ export default function LoginScreen() {
                 onPress={() =>
                   Alert.alert(
                     'Forgot Password',
-                    'Password recovery will be connected later.'
+                    'Password recovery will be connected later.',
                   )
                 }
               >
-                <Text style={styles.forgotText}>
+                <Text
+                  style={
+                    styles.forgotText
+                  }
+                >
                   Forgot password?
                 </Text>
               </Pressable>
@@ -168,8 +559,12 @@ export default function LoginScreen() {
               ]}
               onPress={handleLogin}
             >
-              <Text style={styles.loginButtonText}>
-                LOGIN
+              <Text
+                style={
+                  styles.loginButtonText
+                }
+              >
+                LOGIN AS {selectedRole}
               </Text>
 
               <Text style={styles.arrow}>
@@ -179,19 +574,23 @@ export default function LoginScreen() {
 
             {/* ROLE INFORMATION */}
             <View style={styles.roleBox}>
-              <Text style={styles.roleTitle}>
+              <Text
+                style={styles.roleTitle}
+              >
                 AUTHORIZED ACCESS
               </Text>
 
-              <Text style={styles.roleText}>
-                Admin • Judge
+              <Text
+                style={styles.roleText}
+              >
+                Admin • Judge • Boxer
               </Text>
             </View>
           </View>
 
           {/* FOOTER */}
           <Text style={styles.footer}>
-            Tournament Management & Scoring Platform
+            Tournament Management  •  Scoring Platform
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -202,18 +601,19 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#0B0D10',
+    backgroundColor: '#080A0D',
   },
 
   container: {
     flex: 1,
-    backgroundColor: '#0B0D10',
+    backgroundColor: '#080A0D',
   },
 
   scrollContent: {
     flexGrow: 1,
-    paddingHorizontal: 24,
-    paddingVertical: 28,
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    paddingBottom: 18,
     justifyContent: 'center',
   },
 
@@ -221,45 +621,52 @@ const styles = StyleSheet.create({
 
   brandSection: {
     alignItems: 'center',
-    marginBottom: 28,
+    marginBottom: 24,
   },
 
   logoCircle: {
-    width: 82,
-    height: 82,
-    borderRadius: 41,
-    backgroundColor: '#15191F',
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: '#11151A',
     borderWidth: 1,
-    borderColor: '#30353D',
+    borderColor: '#303740',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
+    marginBottom: 14,
+    shadowColor: '#000000',
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 5,
   },
 
   gloveEmoji: {
-    fontSize: 42,
+    fontSize: 39,
   },
 
   appTitle: {
     color: '#FFFFFF',
-    fontSize: 28,
+    fontSize: 27,
     fontWeight: '900',
-    letterSpacing: 3,
+    letterSpacing: 3.5,
   },
 
   appSubtitle: {
-    color: '#AEB4BD',
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 4,
-    marginTop: 4,
+    color: '#9CA4AE',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 3.2,
+    marginTop: 5,
   },
 
   cornerLine: {
     flexDirection: 'row',
-    width: 100,
+    width: 92,
     height: 3,
-    marginTop: 16,
+    marginTop: 14,
+    borderRadius: 2,
+    overflow: 'hidden',
   },
 
   redLine: {
@@ -275,57 +682,123 @@ const styles = StyleSheet.create({
   /* LOGIN CARD */
 
   card: {
-    backgroundColor: '#15191F',
-    borderRadius: 22,
-    padding: 22,
+    backgroundColor: '#12161B',
+    borderRadius: 20,
+    paddingHorizontal: 20,
+    paddingTop: 21,
+    paddingBottom: 19,
     borderWidth: 1,
-    borderColor: '#282D35',
+    borderColor: '#272D35',
+    shadowColor: '#000000',
+    shadowOpacity: 0.28,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 7,
   },
 
   welcome: {
     color: '#FFFFFF',
-    fontSize: 25,
+    fontSize: 24,
     fontWeight: '800',
-    marginBottom: 6,
+    letterSpacing: 0.2,
+    marginBottom: 5,
   },
 
   description: {
-    color: '#8F969F',
-    fontSize: 13,
-    marginBottom: 26,
+    color: '#8F98A3',
+    fontSize: 12.5,
+    lineHeight: 18,
+    marginBottom: 20,
   },
 
-  inputGroup: {
+  /* ROLE SELECTOR */
+
+  roleSection: {
     marginBottom: 18,
   },
 
+  roleSelector: {
+    flexDirection: 'row',
+    backgroundColor: '#0A0D11',
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: '#2B323B',
+    padding: 4,
+  },
+
+  roleButton: {
+    flex: 1,
+    height: 43,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  roleButtonActive: {
+    backgroundColor: '#E53935',
+    shadowColor: '#E53935',
+    shadowOpacity: 0.18,
+    shadowRadius: 7,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+  },
+
+  adminRoleActive: {
+    backgroundColor: '#E53935',
+  },
+
+  judgeRoleActive: {
+    backgroundColor: '#1976D2',
+  },
+
+  boxerRoleActive: {
+    backgroundColor: '#43A047',
+  },
+
+  roleButtonText: {
+    color: '#6F7781',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.9,
+  },
+
+  roleButtonTextActive: {
+    color: '#FFFFFF',
+  },
+
+  /* INPUTS */
+
+  inputGroup: {
+    marginBottom: 16,
+  },
+
   label: {
-    color: '#AEB4BD',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1.2,
-    marginBottom: 8,
+    color: '#AAB2BC',
+    fontSize: 10.5,
+    fontWeight: '900',
+    letterSpacing: 1.15,
+    marginBottom: 7,
   },
 
   input: {
-    height: 52,
-    backgroundColor: '#0D1014',
-    borderRadius: 12,
+    height: 51,
+    backgroundColor: '#0A0D11',
+    borderRadius: 11,
     borderWidth: 1,
-    borderColor: '#2C323A',
-    paddingHorizontal: 15,
+    borderColor: '#2B323B',
+    paddingHorizontal: 14,
     color: '#FFFFFF',
-    fontSize: 15,
+    fontSize: 14.5,
   },
 
   /* PASSWORD */
 
   passwordContainer: {
-    height: 52,
-    backgroundColor: '#0D1014',
-    borderRadius: 12,
+    height: 51,
+    backgroundColor: '#0A0D11',
+    borderRadius: 11,
     borderWidth: 1,
-    borderColor: '#2C323A',
+    borderColor: '#2B323B',
     flexDirection: 'row',
     alignItems: 'center',
   },
@@ -333,20 +806,23 @@ const styles = StyleSheet.create({
   passwordInput: {
     flex: 1,
     height: '100%',
-    paddingHorizontal: 15,
+    paddingHorizontal: 14,
     color: '#FFFFFF',
-    fontSize: 15,
+    fontSize: 14.5,
   },
 
   showButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    minWidth: 58,
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   showText: {
     color: '#E53935',
     fontSize: 10,
     fontWeight: '900',
+    letterSpacing: 0.7,
   },
 
   /* OPTIONS */
@@ -355,7 +831,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 24,
+    marginTop: 1,
+    marginBottom: 21,
   },
 
   rememberContainer: {
@@ -368,7 +845,7 @@ const styles = StyleSheet.create({
     height: 19,
     borderRadius: 5,
     borderWidth: 1,
-    borderColor: '#555C66',
+    borderColor: '#555E68',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 8,
@@ -386,82 +863,91 @@ const styles = StyleSheet.create({
   },
 
   rememberText: {
-    color: '#9EA5AE',
+    color: '#969EA8',
     fontSize: 12,
   },
 
   forgotText: {
     color: '#E53935',
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '800',
   },
 
   /* LOGIN BUTTON */
 
   loginButton: {
-    height: 56,
-    borderRadius: 14,
-    backgroundColor: '#E53935',
+    height: 55,
+    borderRadius: 12,
+    backgroundColor: '#D93632',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowColor: '#E53935',
+    shadowOpacity: 0.22,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 5,
   },
 
   loginButtonPressed: {
-    opacity: 0.75,
+    opacity: 0.78,
     transform: [
       {
-        scale: 0.98,
+        scale: 0.985,
       },
     ],
   },
 
   loginButtonText: {
     color: '#FFFFFF',
-    fontSize: 15,
+    fontSize: 12.5,
     fontWeight: '900',
-    letterSpacing: 2,
+    letterSpacing: 1.4,
   },
 
   arrow: {
     color: '#FFFFFF',
-    fontSize: 22,
-    marginLeft: 12,
+    fontSize: 21,
+    marginLeft: 11,
     marginTop: -2,
+    fontWeight: '600',
   },
 
-  /* ROLE */
+  /* ROLE INFORMATION */
 
   roleBox: {
-    marginTop: 18,
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: '#101318',
+    marginTop: 16,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    borderRadius: 9,
+    backgroundColor: '#0D1014',
+    borderWidth: 1,
+    borderColor: '#20262D',
     alignItems: 'center',
   },
 
   roleTitle: {
-    color: '#6F7782',
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 1.5,
+    color: '#68717C',
+    fontSize: 8.5,
+    fontWeight: '900',
+    letterSpacing: 1.6,
   },
 
   roleText: {
-    color: '#C7CBD1',
-    fontSize: 12,
+    color: '#C5CAD1',
+    fontSize: 11.5,
+    fontWeight: '600',
     marginTop: 4,
   },
 
   /* FOOTER */
 
   footer: {
-    color: '#555C65',
-    fontSize: 10,
+    color: '#505862',
+    fontSize: 9.5,
+    fontWeight: '600',
     textAlign: 'center',
-    marginTop: 20,
+    marginTop: 15,
+    letterSpacing: 0.25,
   },
 });
